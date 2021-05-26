@@ -1,67 +1,67 @@
-version: "3"
-
+version: '3'
 services:
-  mysql:
-    image: mysql:5.7
+
+  nginx-proxy:
+    image: jwilder/nginx-proxy
     restart: always
-    container_name: mysql
-    hostname: mysql
-    networks:
-      - net-backend
-    expose:
-      - 3306
+    ports:
+    - "80:80"
+    - "443:443"
     volumes:
-      - db_data:/var/lib/mysql
-    environment:
-      MYSQL_ROOT_PASSWORD: streama_root_password
-      MYSQL_USER: streama
-      MYSQL_DATABASE: streama
-      MYSQL_PASSWORD: streama_password
+    - ./volumes/nginx/conf.d:/etc/nginx/conf.d
+    - ./volumes/nginx/html:/usr/share/nginx/html
+    - ./volumes/nginx/htpasswd:/etc/nginx/htpasswd
+    - ./volumes/nginx/dhparam:/etc/nginx/dhparam
+    - ./volumes/nginx/vhost:/etc/nginx/vhost.d
+    - ./volumes/nginx/certs:/etc/nginx/certs:ro
+    - /var/run/docker.sock:/tmp/docker.sock:ro
+    labels:
+    - "com.github.jrcs.letsencrypt_nginx_proxy_companion.nginx_proxy"
+
+  letsencrypt:
+    image: jrcs/letsencrypt-nginx-proxy-companion
+    depends_on:
+    - "nginx-proxy"
+    volumes:
+    - ./volumes/nginx/conf.d:/etc/nginx/conf.d
+    - ./volumes/nginx/vhost:/etc/nginx/vhost.d
+    - ./volumes/nginx/html:/usr/share/nginx/html
+    - ./volumes/nginx/certs:/etc/nginx/certs:rw
+    - /var/run/docker.sock:/var/run/docker.sock:ro
 
   streama:
-    image: streama
-    build: .
-    restart: always
-    container_name: streama
-    hostname: streama
-    depends_on:
-      - mysql
-    networks:
-      - net-backend
-    expose:
-      - 8080
+    image: anapsix/alpine-java:8
     volumes:
-      - $HOME/movies:/data/streama # Change to your video folder
-      - app_data:/app/streama
-    environment:
-      ACTIVE_PROFILE: mysql
-      MYSQL_HOST: mysql
-      MYSQL_PORT: 3306
-      MYSQL_DB: streama
-      MYSQL_USER: streama
-      MYSQL_PASSWORD: streama_password
-
-  proxy-reverse:
-    image: proxy-reverse
-    build: nginx/.
-    restart: always
-    container_name: proxy-reverse
-    hostname: proxy-reverse
-    depends_on:
-      - streama
-    networks:
-      - net-backend
+    - ./streama.jar:/app/app.jar
+    - ./application.yml:/app/application.yml
+    - ./volumes/streama/uploads:/app/uploads
+    - ./volumes/streama/local-files:/app/local-files
+    working_dir: /app
+    command: java -jar app.jar
     ports:
-      - "80:80"
+    - "127.0.0.1:8080:8080"
+    depends_on:
+    - db
+    environment:
+    - VIRTUAL_HOST=streama.your-host.net
+    - VIRTUAL_PORT=8080
+    - LETSENCRYPT_HOST=streama.your-host.net
+    - LETSENCRYPT_EMAIL=you@gmail.com
+
+  db:
+    image: mariadb:10
     volumes:
-      - proxy_reverse_data:/etc/nginx
-      - proxy_reverse_data_log:/var/log/nginx
+    - ./volumes/db:/var/lib/mysql
+    restart: always
+    command: --max_allowed_packet=256M --innodb_log_buffer_size=32M --innodb_buffer_pool_size=128M
+    environment:
+    - MYSQL_ROOT_PASSWORD=INSERT_SEC_PASSWORD
+    - MYSQL_DATABASE=streama
+    - MYSQL_USER=streama
+    - MYSQL_PASSWORD=INSERT_ANOTHER_SEC_PASSWORD
+    ports:
+      - 127.0.0.1:3306:3306
 
-networks:
-  net-backend:
-
-volumes:
-  db_data:
-  app_data:
-  proxy_reverse_data:
-  proxy_reverse_data_log:
+  mail:
+    image: bytemark/smtp
+    restart: always
